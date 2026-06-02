@@ -199,10 +199,21 @@ socket.on('training:start', () => {
   disableUI(true);
 });
 
-// Replayed to clients that connect after training already started/finished
+// Reproduzido para clientes que conectam durante ou após o treino.
+// Popula os gráficos com todas as épocas de uma vez (batch) para evitar
+// 60 chamadas individuais de chart.update(), que seriam lentas.
 socket.on('training:history', history => {
   resetCharts();
-  history.forEach(d => pushCharts(d));
+  history.forEach(d => {
+    lossChart.data.labels.push(d.epoch);
+    lossChart.data.datasets[0].data.push(d.loss);
+    lossChart.data.datasets[1].data.push(d.valLoss);
+    accChart.data.labels.push(d.epoch);
+    accChart.data.datasets[0].data.push(d.accuracy);
+    accChart.data.datasets[1].data.push(d.valAccuracy);
+  });
+  lossChart.update();
+  accChart.update();
 });
 
 socket.on('training:progress', data => {

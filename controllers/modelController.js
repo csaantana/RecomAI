@@ -62,6 +62,12 @@ async function triggerTraining(io) {
 
         state.epochHistory.push(epochSnapshot); // salvo para clientes que reconectam
         io.emit('training:progress', epochSnapshot);
+
+        // O backend puro JS do TF.js bloqueia o event loop durante cada época.
+        // Sem este yield o socket.io só consegue enviar todos os eventos de uma vez
+        // ao final do treino — os gráficos ficam em branco até o fim.
+        // setTimeout(0) cede o loop após cada época para o socket.io poder fluir.
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
     );
 

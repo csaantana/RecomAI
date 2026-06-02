@@ -38,16 +38,21 @@ expressApp.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'views', 'i
 socketIo.on('connection', clientSocket => {
   const state = require('./models/stateModel');
 
-  // Reproduz épocas já processadas (cobre casos B e C)
   if (state.epochHistory.length) {
+    // Caso B ou C — cliente chegou durante ou após o treino.
+    // Manda o histórico de épocas primeiro para popular os gráficos.
     clientSocket.emit('training:history', state.epochHistory);
+    // NÃO mandamos training:start aqui: o handler no browser chama
+    // resetCharts() ao receber training:start, o que apagaria o histórico.
+    // Os eventos training:progress seguintes chegam naturalmente via io.emit().
+  } else if (state.isTraining) {
+    // Caso A — treino começou mas ainda não há épocas registradas.
+    clientSocket.emit('training:start', { totalEpochs: 60 });
   }
 
-  // Notifica o estado atual do treino para que o browser ajuste a UI corretamente
+  // Treino já concluído → informa direto para habilitar o botão de recomendação
   if (state.trainingComplete) {
     clientSocket.emit('training:done', state.lastMetrics);
-  } else if (state.isTraining) {
-    clientSocket.emit('training:start', { totalEpochs: 60 });
   }
 
   console.log('🔌 Browser conectado');
