@@ -39,6 +39,62 @@ A full-stack product recommendation engine built with **TensorFlow.js**, **Node.
 
 ## Architecture
 
+### Component Diagram
+
+```mermaid
+graph LR
+    subgraph Client["🌐 Browser — port 3001"]
+        UI["Bootstrap 5 UI\nindex.html"]
+        Charts["Chart.js\nLoss & Accuracy"]
+        SClient["Socket.io Client"]
+    end
+
+    subgraph BS["🔄 BrowserSync"]
+        Proxy["HTTP Proxy\n+ File Watcher"]
+    end
+
+    subgraph API["⚙️ Express — port 3000"]
+        Router["Router\n/api/*"]
+
+        subgraph CTRL["Controllers"]
+            PC["ProductController"]
+            UC["UserController"]
+            MC["ModelController"]
+        end
+
+        subgraph MDL["Models"]
+            State["StateModel\ncart · trainedModel\nisTraining"]
+            RecM["RecommendationModel\nTensorFlow.js"]
+        end
+
+        SIO["Socket.io Server"]
+    end
+
+    subgraph TF["🧠 TF.js Pipeline"]
+        Gen["generateTrainingData\n~3 000 samples"]
+        Net["Neural Network\n128 → 64 → 32 → 1"]
+        Score["scoreProducts\nrank by score"]
+    end
+
+    subgraph DATA["📦 Data"]
+        PJ[("products.json\n30 items")]
+        UJ[("users.json\n10 users")]
+    end
+
+    UI -->|HTTP GET /| Proxy -->|proxy| Router
+    SClient <-->|WebSocket| SIO
+    Router --> PC & UC & MC
+    PC & UC & MC <--> State
+    MC --> RecM
+    RecM --> Gen --> UJ & PJ
+    RecM --> Net --> Score
+    Score --> State
+    SIO -->|training:progress\ntraining:done| SClient
+    Charts -.-> UI
+```
+
+### Folder Structure
+
 ```
 RecomAI/
 ├── app.js                    # Entry point — Express + Socket.io + BrowserSync
@@ -98,6 +154,71 @@ Input(36) ──► Dense(128, ReLU) ──► BatchNorm ──► Dropout(0.3)
 cart_context = mean(feature_vectors of cart items)
 score(p)     = model.predict([cart_context, feature_vector(p)])
 ranking      = products sorted by score descending (cart items pushed to bottom)
+```
+
+---
+
+## Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant UI  as Browser UI
+    participant BS  as BrowserSync :3001
+    participant API as Express :3000
+    participant TF  as TF.js Model
+    participant DB  as data/*.json
+
+    Note over User,DB: ── App Initialization ──────────────────────────
+    User->>BS: Open http://localhost:3001
+    BS->>API: proxy → GET /
+    API-->>UI: index.html
+    UI->>API: GET /api/products
+    UI->>API: GET /api/users
+    API->>DB: read JSON files
+    DB-->>API: products + users
+    API-->>UI: JSON arrays
+    UI-->>User: Product grid + user dropdown
+
+    Note over User,DB: ── Cart Management ─────────────────────────────
+    User->>UI: Select existing user
+    UI->>API: POST /api/cart/load/:userId
+    API-->>UI: purchase history as cart
+    UI-->>User: Cart + products updated
+
+    User->>UI: Click ＋ Adicionar on a product
+    UI->>API: POST /api/cart/add { productId }
+    API-->>UI: updated cart[]
+    UI-->>User: Card marked as in-cart
+
+    Note over User,DB: ── Model Training ──────────────────────────────
+    User->>UI: Click ⚡ Train Model
+    UI->>API: POST /api/model/train
+    API-->>UI: { message: "Training started" }
+
+    API->>DB: read users.json + products.json
+    API->>TF: generateTrainingData() → ~3 000 samples
+    API->>TF: model.fit(X, y, epochs=60)
+
+    loop Each epoch  (1 → 60)
+        TF-->>API: onEpochEnd(epoch, { loss, accuracy, val_loss, val_accuracy })
+        API-->>UI: socket.emit("training:progress")
+        UI-->>User: Live chart update
+    end
+
+    TF-->>API: training complete
+    API->>API: state.model = trainedModel
+    API-->>UI: socket.emit("training:done")
+    UI-->>User: ✅ Accuracy + loss summary
+
+    Note over User,DB: ── Recommendation ──────────────────────────────
+    User->>UI: Click 🎯 Run Recommendation
+    UI->>API: POST /api/model/recommend
+    API->>TF: scoreProducts(cart, allProducts)
+    Note right of TF: cart_ctx = mean(cartVectors)<br/>score(p) = model.predict([ctx, p])
+    TF-->>API: products[] sorted by score desc
+    API-->>UI: { sortedProducts, recommendation }
+    UI-->>User: Re-sorted grid · ⭐ Top Pick badge · Checkout card
 ```
 
 ---
