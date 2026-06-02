@@ -1,0 +1,37 @@
+[
+  { "id": "p01", "name": "Notebook Pro 15",        "category": "Electronics", "price": 4500, "color": "Silver" },
+  { "id": "p02", "name": "Wireless Mouse",          "category": "Electronics", "price": 120,  "color": "Black"  },
+  { "id": "p03", "name": "Mechanical Keyboard",     "category": "Electronics", "price": 350,  "color": "Black"  },
+  { "id": "p04", "name": "USB-C Hub 7-in-1",        "category": "Electronics", "price": 180,  "color": "Gray"   },
+  { "id": "p05", "name": "Webcam HD 1080p",         "category": "Electronics", "price": 250,  "color": "Black"  },
+  { "id": "p06", "name": "Gaming Headset RGB",      "category": "Electronics", "price": 400,  "color": "Black"  },
+  { "id": "p07", "name": "Bluetooth Speaker Slim",  "category": "Electronics", "price": 290,  "color": "Blue"   },
+  { "id": "p08", "name": "Monitor 4K 27pol",        "category": "Electronics", "price": 1800, "color": "Black"  },
+
+  { "id": "p09", "name": "Summer Floral Dress",     "category": "Clothing",    "price": 180,  "color": "Red"    },
+  { "id": "p10", "name": "High Heel Pumps",          "category": "Clothing",    "price": 290,  "color": "Black"  },
+  { "id": "p11", "name": "Leather Handbag",          "category": "Clothing",    "price": 450,  "color": "Brown"  },
+  { "id": "p12", "name": "Aviator Sunglasses",       "category": "Clothing",    "price": 220,  "color": "Gold"   },
+  { "id": "p13", "name": "Sports T-Shirt Dry-Fit",  "category": "Clothing",    "price": 90,   "color": "Blue"   },
+  { "id": "p14", "name": "Running Shorts Pro",       "category": "Clothing",    "price": 75,   "color": "Black"  },
+
+  { "id": "p15", "name": "Running Shoes Air",        "category": "Sports",      "price": 520,  "color": "White"  },
+  { "id": "p16", "name": "Yoga Mat Premium",         "category": "Sports",      "price": 130,  "color": "Purple" },
+  { "id": "p17", "name": "Water Bottle 1L",          "category": "Sports",      "price": 65,   "color": "Green"  },
+  { "id": "p18", "name": "Adjustable Dumbbells",     "category": "Sports",      "price": 380,  "color": "Gray"   },
+  { "id": "p19", "name": "Jump Rope Speed",          "category": "Sports",      "price": 55,   "color": "Black"  },
+  { "id": "p20", "name": "Hiking Backpack 40L",      "category": "Sports",      "price": 320,  "color": "Green"  },
+
+  { "id": "p21", "name": "Chef Knife 8pol",          "category": "Home",        "price": 280,  "color": "Silver" },
+  { "id": "p22", "name": "Cast Iron Skillet",        "category": "Home",        "price": 190,  "color": "Black"  },
+  { "id": "p23", "name": "Cutting Board Bamboo",     "category": "Home",        "price": 85,   "color": "Brown"  },
+  { "id": "p24", "name": "Coffee Maker Drip",        "category": "Home",        "price": 350,  "color": "Silver" },
+  { "id": "p25", "name": "LED Desk Lamp",            "category": "Home",        "price": 120,  "color": "White"  },
+
+  { "id": "p26", "name": "Vitamin C Serum",          "category": "Beauty",      "price": 150,  "color": "Orange" },
+  { "id": "p27", "name": "Matte Lipstick Set",       "category": "Beauty",      "price": 95,   "color": "Red"    },
+  { "id": "p28", "name": "Face Moisturizer SPF50",   "category": "Beauty",      "price": 120,  "color": "White"  },
+
+  { "id": "p29", "name": "Atomic Habits (Livro)",    "category": "Books",       "price": 55,   "color": "Blue"   },
+  { "id": "p30", "name": "Clean Code (Livro)",       "category": "Books",       "price": 65,   "color": "White"  }
+]

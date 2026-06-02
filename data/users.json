@@ -1,0 +1,52 @@
+[
+  {
+    "id": "u01",
+    "name": "Alex (Tech Worker)",
+    "purchaseHistory": ["p01", "p02", "p03", "p04", "p05"]
+  },
+  {
+    "id": "u02",
+    "name": "Jordan (Gamer)",
+    "purchaseHistory": ["p06", "p02", "p03", "p08", "p04"]
+  },
+  {
+    "id": "u03",
+    "name": "Maria (Fitness)",
+    "purchaseHistory": ["p15", "p13", "p17", "p16", "p18"]
+  },
+  {
+    "id": "u04",
+    "name": "Sofia (Fashion)",
+    "purchaseHistory": ["p09", "p10", "p11", "p12", "p27"]
+  },
+  {
+    "id": "u05",
+    "name": "Lucas (Estudante)",
+    "purchaseHistory": ["p30", "p25", "p04", "p29", "p07"]
+  },
+  {
+    "id": "u06",
+    "name": "Chef Paulo (Culinária)",
+    "purchaseHistory": ["p21", "p22", "p23", "p24", "p25"]
+  },
+  {
+    "id": "u07",
+    "name": "Ana (Wellness)",
+    "purchaseHistory": ["p15", "p13", "p17", "p26", "p28"]
+  },
+  {
+    "id": "u08",
+    "name": "Rafael (Tech + Estudos)",
+    "purchaseHistory": ["p01", "p08", "p30", "p29", "p25"]
+  },
+  {
+    "id": "u09",
+    "name": "Pedro (Outdoor)",
+    "purchaseHistory": ["p20", "p17", "p15", "p14", "p19"]
+  },
+  {
+    "id": "u10",
+    "name": "Isabella (Fashion + Beauty)",
+    "purchaseHistory": ["p09", "p12", "p26", "p27", "p28"]
+  }
+]

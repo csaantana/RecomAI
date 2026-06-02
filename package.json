@@ -1,0 +1,19 @@
+{
+  "name": "recommendation-system",
+  "version": "1.0.0",
+  "description": "TensorFlow.js Product Recommendation System",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.20.0",
+    "browser-sync": "^3.0.3",
+    "express": "^4.18.2",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
