@@ -5,64 +5,83 @@ const { Server } = require('socket.io');
 const path       = require('path');
 const routes     = require('./routes');
 
-const app    = express();
-const server = http.createServer(app);
-const io     = new Server(server, { cors: { origin: '*' } });
-const PORT   = 3000;
+// ─────────────────────────────────────────────────────────────────────────────
+// SERVIDOR — ponto de entrada da aplicação
+//
+// Responsabilidades:
+//   1. Configura o Express (HTTP) e o Socket.io (WebSocket) no mesmo servidor
+//   2. Registra as rotas da API
+//   3. Ao subir, dispara o treino automático do modelo
+//   4. Sincroniza novos clientes Socket.io com o estado atual do treino
+// ─────────────────────────────────────────────────────────────────────────────
 
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-app.set('io', io);
+const expressApp = express();
+const httpServer = http.createServer(expressApp);
+const socketIo   = new Server(httpServer, { cors: { origin: '*' } });
+const PORT       = 3000;
 
-app.use('/api', routes);
-app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'views', 'index.html')));
+// Middleware: lê JSON no body e serve arquivos estáticos da pasta /public
+expressApp.use(express.json());
+expressApp.use(express.static(path.join(__dirname, 'public')));
 
-// ── Socket.io ─────────────────────────────────────────────────────────────────
-// When a client connects mid-training or after training, catch it up immediately.
-io.on('connection', socket => {
+// Disponibiliza a instância do Socket.io para os controllers via req.app.get('io')
+expressApp.set('io', socketIo);
+
+expressApp.use('/api', routes);
+expressApp.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'views', 'index.html')));
+
+// ── Sincronização de clientes Socket.io ──────────────────────────────────────
+// Quando um novo browser conecta (ou reconecta após refresh), pode chegar em 3 momentos:
+//   A) Antes do treino começar  → não faz nada, o evento 'training:start' chegará logo
+//   B) Durante o treino         → reproduz épocas já registradas + recebe o restante ao vivo
+//   C) Após o treino concluir   → reproduz todo o histórico + recebe 'training:done'
+socketIo.on('connection', clientSocket => {
   const state = require('./models/stateModel');
 
+  // Reproduz épocas já processadas (cobre casos B e C)
   if (state.epochHistory.length) {
-    // Replay all epochs recorded so far (covers mid-training joins and post-training page refreshes)
-    socket.emit('training:history', state.epochHistory);
+    clientSocket.emit('training:history', state.epochHistory);
   }
 
+  // Notifica o estado atual do treino para que o browser ajuste a UI corretamente
   if (state.trainingComplete) {
-    socket.emit('training:done', state.lastMetrics);
+    clientSocket.emit('training:done', state.lastMetrics);
   } else if (state.isTraining) {
-    socket.emit('training:start', { totalEpochs: 60 });
+    clientSocket.emit('training:start', { totalEpochs: 60 });
   }
 
-  console.log('🔌 Client connected');
-  socket.on('disconnect', () => console.log('🔌 Client disconnected'));
+  console.log('🔌 Browser conectado');
+  clientSocket.on('disconnect', () => console.log('🔌 Browser desconectado'));
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
-server.listen(PORT, () => {
+// ── Inicialização ─────────────────────────────────────────────────────────────
+httpServer.listen(PORT, () => {
   console.log(`\n✅  App  → http://localhost:${PORT}`);
 
-  // Auto-train once on startup — model stays in memory for the lifetime of the process
+  // Treina o modelo uma única vez ao subir o servidor.
+  // Após o treino, qualquer seleção de usuário / mudança de carrinho usa apenas
+  // inferência (scoreProducts) — rápida, sem precisar retreinar.
   const { triggerTraining } = require('./controllers/modelController');
-  console.log('🧠  Auto-training recommendation model...');
-  triggerTraining(io).then(() => {
+  console.log('🧠  Iniciando treino automático do modelo...');
+  triggerTraining(socketIo).then(() => {
     if (require('./models/stateModel').trainingComplete) {
-      console.log('🎯  Model ready — recommendations available without retraining.\n');
+      console.log('🎯  Modelo pronto — recomendações disponíveis sem novo treino.\n');
     }
   });
 
-  // BrowserSync proxy (auto-reload on view/asset changes)
+  // BrowserSync: proxy reverso que monitora arquivos e recarrega o browser automaticamente
   try {
-    const bs = require('browser-sync').create();
-    bs.init({
-      proxy   : `localhost:${PORT}`,
-      port    : PORT + 1,
-      files   : ['views/**/*.html', 'public/**/*'],
+    const browserSync = require('browser-sync').create();
+    browserSync.init({
+      proxy   : `localhost:${PORT}`, // encaminha requests para o Express
+      port    : PORT + 1,            // browser-sync escuta na porta 3001
+      files   : ['views/**/*.html', 'public/**/*'], // arquivos monitorados
       open    : true,
       notify  : false,
       logLevel: 'silent',
     });
     console.log(`🔄  Sync → http://localhost:${PORT + 1}  (auto-reload ativo)\n`);
-  } catch (e) {
-    console.warn('browser-sync não disponível:', e.message);
+  } catch (err) {
+    console.warn('browser-sync não disponível:', err.message);
   }
 });

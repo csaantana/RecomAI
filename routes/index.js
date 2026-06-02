@@ -2,18 +2,23 @@
 const express = require('express');
 const router  = express.Router();
 
-const product = require('../controllers/productController');
-const user    = require('../controllers/userController');
-const model   = require('../controllers/modelController');
+const productController = require('../controllers/productController');
+const userController    = require('../controllers/userController');
+const modelController   = require('../controllers/modelController');
 
-router.get('/products',           product.getAll);
-router.get('/users',              user.getAll);
-router.get('/cart',               user.getCart);
-router.post('/cart/add',          user.addToCart);
-router.delete('/cart/:productId', user.removeFromCart);
-router.post('/cart/clear',        user.clearCart);
-router.post('/cart/load/:userId', user.loadUserCart);
-router.post('/model/train',       model.train);
-router.post('/model/recommend',   model.recommend);
+// ── Produtos ──────────────────────────────────────────────────────────────────
+router.get('/products', productController.getAll);          // catálogo (ordenado por score se modelo ativo)
+
+// ── Usuários e carrinho ───────────────────────────────────────────────────────
+router.get('/users',                 userController.getAll);         // lista os 10 usuários
+router.get('/cart',                  userController.getCart);        // carrinho atual
+router.post('/cart/add',             userController.addToCart);      // adiciona produto { productId }
+router.delete('/cart/:productId',    userController.removeFromCart); // remove produto por id
+router.post('/cart/clear',           userController.clearCart);      // esvazia o carrinho
+router.post('/cart/load/:userId',    userController.loadUserCart);   // carrega histórico do usuário
+
+// ── Modelo de recomendação ────────────────────────────────────────────────────
+router.post('/model/train',          modelController.train);         // retreino manual (opcional)
+router.post('/model/recommend',      modelController.recommend);     // pontua e ordena o catálogo
 
 module.exports = router;

@@ -1,78 +1,108 @@
 'use strict';
-const usersData = require('../data/users.json');
-const products  = require('../data/products.json');
-const state     = require('../models/stateModel');
+const allUsers    = require('../data/users.json');    // histórico de compras dos 10 usuários
+const allProducts = require('../data/products.json'); // catálogo completo (30 produtos)
+const state       = require('../models/stateModel');
 const { trainModel, scoreProducts } = require('../models/recommendationModel');
 
-// ── Shared training logic (used by auto-train on startup & manual retrain) ──
-
+// ─────────────────────────────────────────────────────────────────────────────
+// triggerTraining
+//
+// Função central de treinamento — chamada automaticamente no startup do servidor
+// e opcionalmente pelo endpoint POST /api/model/train (retreino manual).
+//
+// Fluxo:
+//   1. Gera ~3000 amostras a partir do histórico dos usuários
+//   2. Treina a rede por 60 épocas
+//   3. Emite eventos Socket.io a cada época → browser atualiza os gráficos em tempo real
+//   4. Ao terminar, persiste o modelo treinado no state (em memória)
+//
+// O modelo treinado fica disponível para todos os requests subsequentes
+// sem precisar de novo treino — apenas a inferência (scoreProducts) é chamada.
+// ─────────────────────────────────────────────────────────────────────────────
 async function triggerTraining(io) {
-  if (state.isTraining) return;
+  if (state.isTraining) return; // evita treinos simultâneos
 
+  // Reinicia o estado de treino
   state.isTraining       = true;
   state.trainingComplete = false;
-  state.epochHistory     = [];
+  state.epochHistory     = []; // histórico de épocas para clientes que conectam tarde
 
   io.emit('training:start', { totalEpochs: 60 });
 
   try {
     const { model, history, sampleCount } = await trainModel(
-      usersData,
-      products,
-      (epoch, logs) => {
-        const acc    = logs.acc     ?? logs.accuracy     ?? 0;
-        const valAcc = logs.val_acc ?? logs.val_accuracy ?? 0;
-        const data   = {
-          epoch      : epoch + 1,
+      allUsers,
+      allProducts,
+
+      // Callback chamado ao fim de cada época pelo TF.js
+      (epochIndex, metrics) => {
+        // TF.js pode retornar 'acc' ou 'accuracy' dependendo da versão
+        const trainAccuracy = metrics.acc      ?? metrics.accuracy      ?? 0;
+        const valAccuracy   = metrics.val_acc  ?? metrics.val_accuracy  ?? 0;
+
+        const epochSnapshot = {
+          epoch      : epochIndex + 1,  // começa em 1 para exibição
           totalEpochs: 60,
-          loss       : +logs.loss.toFixed(4),
-          accuracy   : +acc.toFixed(4),
-          valLoss    : +(logs.val_loss ?? 0).toFixed(4),
-          valAccuracy: +valAcc.toFixed(4),
+          loss       : +metrics.loss.toFixed(4),
+          accuracy   : +trainAccuracy.toFixed(4),
+          valLoss    : +(metrics.val_loss ?? 0).toFixed(4),
+          valAccuracy: +valAccuracy.toFixed(4),
         };
-        state.epochHistory.push(data);
-        io.emit('training:progress', data);
+
+        // Salva no histórico para reproduzir ao browser que reconectar após o treino
+        state.epochHistory.push(epochSnapshot);
+        io.emit('training:progress', epochSnapshot);
       }
     );
 
+    // Persiste o modelo treinado — sobrevive a qualquer número de requests
     state.model           = model;
     state.trainingComplete = true;
 
-    const histAcc    = history.history.acc ?? history.history.accuracy ?? [];
+    // Extrai métricas finais do histórico retornado pelo TF.js
+    const accuracyHistory = history.history.acc ?? history.history.accuracy ?? [];
     state.lastMetrics = {
       sampleCount,
       finalLoss    : +history.history.loss.at(-1).toFixed(4),
-      finalAccuracy: histAcc.length ? +histAcc.at(-1).toFixed(4) : 0,
+      finalAccuracy: accuracyHistory.length ? +accuracyHistory.at(-1).toFixed(4) : 0,
     };
 
     io.emit('training:done', state.lastMetrics);
-  } catch (err) {
-    console.error('[Trainer]', err);
-    io.emit('training:error', { message: err.message });
+
+  } catch (trainingError) {
+    console.error('[ModelController] Erro durante o treino:', trainingError);
+    io.emit('training:error', { message: trainingError.message });
+
   } finally {
     state.isTraining = false;
   }
 }
 
-// ── Controller handlers ───────────────────────────────────────────────────────
+// ── Endpoints HTTP ────────────────────────────────────────────────────────────
 
 exports.triggerTraining = triggerTraining;
 
+// POST /api/model/train — retreino manual (opcional, modelo já treina no startup)
 exports.train = async (req, res) => {
   if (state.isTraining) {
     return res.status(409).json({ error: 'Treinamento já em andamento' });
   }
-  const io = req.app.get('io');
-  res.json({ message: 'Retreinamento iniciado' });
+
+  const io = req.app.get('io'); // acessa a instância Socket.io registrada no app
+  res.json({ message: 'Retreinamento iniciado' }); // responde imediatamente (treino é assíncrono)
   await triggerTraining(io);
 };
 
+// POST /api/model/recommend — pontua e ordena o catálogo com base no carrinho atual
 exports.recommend = (req, res) => {
   if (!state.model)        return res.status(400).json({ error: 'Modelo não treinado ainda' });
   if (!state.cart.length)  return res.status(400).json({ error: 'Carrinho está vazio' });
 
-  const sorted         = scoreProducts(state.model, state.cart, products);
-  const recommendation = sorted.find(p => !p.inCart) ?? null;
+  // Pontua todos os produtos usando o modelo treinado e o vetor do carrinho atual
+  const rankedProducts = scoreProducts(state.model, state.cart, allProducts);
 
-  res.json({ sortedProducts: sorted, recommendation });
+  // A recomendação principal é o produto com maior score que ainda não está no carrinho
+  const topRecommendation = rankedProducts.find(product => !product.inCart) ?? null;
+
+  res.json({ sortedProducts: rankedProducts, recommendation: topRecommendation });
 };

@@ -1,169 +1,243 @@
 'use strict';
 const tf = require('@tensorflow/tfjs');
 
-const CATEGORIES  = ['Electronics', 'Clothing', 'Sports', 'Home', 'Beauty', 'Books'];
-const COLORS      = ['Silver', 'Black', 'Gray', 'White', 'Blue', 'Red', 'Brown', 'Gold', 'Purple', 'Green', 'Orange'];
-const MAX_PRICE   = 5000;
-const FEATURE_DIM = CATEGORIES.length + 1 + COLORS.length; // 6 + 1 + 11 = 18
+// ─────────────────────────────────────────────────────────────────────────────
+// RECOMMENDATION MODEL
+//
+// Abordagem: modelo pairwise ("par de produtos")
+//   Entrada : concat( vetor do carrinho atual | vetor do produto candidato )
+//   Saída   : probabilidade [0–1] de que o produto candidato combine com o carrinho
+//
+// O modelo aprende padrões de co-compra a partir do histórico dos 10 usuários.
+// Uma vez treinado, basta passar qualquer carrinho que ele rankeia o catálogo.
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ── Feature encoding ─────────────────────────────────────────────────────────
+// ── 1. Espaço de features ─────────────────────────────────────────────────────
+// Cada produto vira um vetor de 18 números:
+//   6 (categoria, one-hot) + 1 (preço normalizado) + 11 (cor, one-hot) = 18
+const PRODUCT_CATEGORIES = ['Electronics', 'Clothing', 'Sports', 'Home', 'Beauty', 'Books'];
+const PRODUCT_COLORS     = ['Silver', 'Black', 'Gray', 'White', 'Blue', 'Red', 'Brown', 'Gold', 'Purple', 'Green', 'Orange'];
+const MAX_PRICE_BRL      = 5000;
+const FEATURE_DIM        = PRODUCT_CATEGORIES.length + 1 + PRODUCT_COLORS.length; // 18
 
-function productToVector(p) {
-  const cat   = CATEGORIES.map(c => (c === p.category ? 1.0 : 0.0));
-  const price = [Math.min(p.price / MAX_PRICE, 1.0)];
-  const color = COLORS.map(c => (c === p.color ? 1.0 : 0.0));
-  return [...cat, ...price, ...color];
+// ── 2. Encoding de produto → vetor numérico ───────────────────────────────────
+// One-hot: a posição correspondente recebe 1.0, o restante fica 0.0.
+// O preço é dividido pelo máximo esperado para ficar na mesma escala [0, 1]
+// (sem isso, features com valores grandes dominam as pequenas numericamente).
+function productToFeatureVector(product) {
+  const categoryOneHot = PRODUCT_CATEGORIES.map(cat => (cat === product.category ? 1.0 : 0.0));
+  const normalizedPrice = [Math.min(product.price / MAX_PRICE_BRL, 1.0)];
+  const colorOneHot    = PRODUCT_COLORS.map(color => (color === product.color ? 1.0 : 0.0));
+
+  return [...categoryOneHot, ...normalizedPrice, ...colorOneHot]; // 18 dimensões
 }
 
-function meanVector(vecs) {
-  if (!vecs.length) return new Array(FEATURE_DIM).fill(0);
-  const sum = new Array(FEATURE_DIM).fill(0);
-  for (const v of vecs) v.forEach((x, i) => { sum[i] += x; });
-  return sum.map(x => x / vecs.length);
-}
+// Representa um conjunto de produtos (ex: carrinho) como a média dos seus vetores.
+// A média captura o "perfil geral" do carrinho sem depender do número de itens.
+function averageFeatureVector(productFeatureVectors) {
+  if (!productFeatureVectors.length) return new Array(FEATURE_DIM).fill(0);
 
-// ── Combinatorics ─────────────────────────────────────────────────────────────
-
-function getCombinations(arr, k) {
-  if (k === 0) return [[]];
-  if (!arr.length || arr.length < k) return [];
-  const [head, ...tail] = arr;
-  return [
-    ...getCombinations(tail, k - 1).map(c => [head, ...c]),
-    ...getCombinations(tail, k),
-  ];
-}
-
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+  const sumVector = new Array(FEATURE_DIM).fill(0);
+  for (const featureVector of productFeatureVectors) {
+    featureVector.forEach((value, dimension) => { sumVector[dimension] += value; });
   }
-  return arr;
+  return sumVector.map(sum => sum / productFeatureVectors.length);
 }
 
-// ── Training data generation ──────────────────────────────────────────────────
-//
-// Strategy: for each user with N purchases, generate all subsets of size k
-// (k = 1..N-1) as "cart context". Each subset produces:
-//   - positive samples: remaining purchased products (label = 1)
-//   - negative samples: 3 × |remaining| random un-purchased products (label = 0)
-//
-// ~300 samples/user × 10 users ≈ 3000 training samples total.
+// ── 3. Geração de combinações (helper para dados de treino) ───────────────────
+// Retorna todos os subconjuntos de tamanho k de um array.
+// Ex: getCombinations([A,B,C], 2) → [[A,B], [A,C], [B,C]]
+function getCombinations(array, subsetSize) {
+  if (subsetSize === 0) return [[]];
+  if (!array.length || array.length < subsetSize) return [];
 
+  const [firstItem, ...remainingItems] = array;
+  const subsetsWithFirst    = getCombinations(remainingItems, subsetSize - 1).map(combo => [firstItem, ...combo]);
+  const subsetsWithoutFirst = getCombinations(remainingItems, subsetSize);
+  return [...subsetsWithFirst, ...subsetsWithoutFirst];
+}
+
+function shuffleInPlace(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const randomIndex = Math.floor(Math.random() * (i + 1));
+    [array[i], array[randomIndex]] = [array[randomIndex], array[i]];
+  }
+  return array;
+}
+
+// ── 4. Geração dos dados de treinamento ───────────────────────────────────────
+//
+// Estratégia: simula todos os estados possíveis de carrinho de cada usuário.
+//
+// Para cada usuário com N compras e para cada tamanho k de "carrinho parcial"
+// (k = 1 até N-1):
+//   → gera todos os subconjuntos de tamanho k como contexto de carrinho
+//   → produtos restantes comprados pelo usuário  = label 1 (par positivo)
+//   → produtos aleatórios não comprados          = label 0 (par negativo, 3x)
+//
+// Resultado: ~300 amostras/usuário × 10 usuários ≈ 3000 amostras balanceadas,
+// cobrindo muitos cenários de compra sem precisar de dataset externo.
 function generateTrainingData(users, products) {
-  const pMap   = {};
-  products.forEach(p => { pMap[p.id] = p; });
-  const allIds = products.map(p => p.id);
+  // Índice rápido para buscar produto por id
+  const productById = {};
+  products.forEach(product => { productById[product.id] = product; });
 
-  const inputs = [];
-  const labels = [];
+  const allProductIds = products.map(product => product.id);
+
+  // X = vetores de entrada (36 dims cada), y = labels (0 ou 1)
+  const inputVectors = [];
+  const outputLabels = [];
 
   for (const user of users) {
-    const bought = user.purchaseHistory.map(id => pMap[id]).filter(Boolean);
-    if (bought.length < 2) continue;
+    const purchasedProducts = user.purchaseHistory
+      .map(productId => productById[productId])
+      .filter(Boolean); // descarta ids inválidos
 
-    const boughtIds = new Set(bought.map(p => p.id));
-    const negPool   = allIds.filter(id => !boughtIds.has(id));
+    if (purchasedProducts.length < 2) continue; // precisa de ao menos 2 itens para formar par
 
-    for (let k = 1; k < bought.length; k++) {
-      for (const subset of getCombinations(bought, k)) {
-        const remaining = bought.filter(p => !subset.includes(p));
-        const ctxVec    = meanVector(subset.map(productToVector));
+    const purchasedProductIds = new Set(purchasedProducts.map(p => p.id));
+    const notPurchasedIds     = allProductIds.filter(id => !purchasedProductIds.has(id));
 
-        // Positive samples
-        for (const pos of remaining) {
-          inputs.push([...ctxVec, ...productToVector(pos)]);
-          labels.push(1.0);
+    for (let cartSize = 1; cartSize < purchasedProducts.length; cartSize++) {
+      const cartSubsets = getCombinations(purchasedProducts, cartSize);
+
+      for (const cartSubset of cartSubsets) {
+        // Produtos que o usuário comprou mas ainda não estão neste carrinho parcial
+        const productsNotYetInCart = purchasedProducts.filter(p => !cartSubset.includes(p));
+
+        // Vetor do carrinho = média dos vetores dos itens do subconjunto atual
+        const cartContextVector = averageFeatureVector(cartSubset.map(productToFeatureVector));
+
+        // Pares positivos: carrinho → produto que o usuário realmente comprou
+        for (const boughtProduct of productsNotYetInCart) {
+          inputVectors.push([...cartContextVector, ...productToFeatureVector(boughtProduct)]);
+          outputLabels.push(1.0);
         }
 
-        // 3 negatives per positive
-        const negs = shuffle([...negPool]).slice(0, remaining.length * 3);
-        for (const negId of negs) {
-          inputs.push([...ctxVec, ...productToVector(pMap[negId])]);
-          labels.push(0.0);
+        // Pares negativos: carrinho → produto aleatório que o usuário NÃO comprou
+        // 3 negativos por positivo mantém o dataset balanceado
+        const negativeProductIds = shuffleInPlace([...notPurchasedIds])
+          .slice(0, productsNotYetInCart.length * 3);
+
+        for (const negativeId of negativeProductIds) {
+          inputVectors.push([...cartContextVector, ...productToFeatureVector(productById[negativeId])]);
+          outputLabels.push(0.0);
         }
       }
     }
   }
 
-  // Final shuffle (zip inputs+labels together to keep alignment)
-  const idx = shuffle(Array.from({ length: labels.length }, (_, i) => i));
+  // Embaralha inputs e labels juntos (mantendo alinhamento) para evitar viés de ordem
+  const shuffledIndices = shuffleInPlace(Array.from({ length: outputLabels.length }, (_, i) => i));
   return {
-    inputs: idx.map(i => inputs[i]),
-    labels: idx.map(i => labels[i]),
-    count : labels.length,
+    inputVectors : shuffledIndices.map(i => inputVectors[i]),
+    outputLabels : shuffledIndices.map(i => outputLabels[i]),
+    totalSamples : outputLabels.length,
   };
 }
 
-// ── Model architecture ────────────────────────────────────────────────────────
-
+// ── 5. Arquitetura da rede neural ─────────────────────────────────────────────
+//
+// Entrada (36): [ vetor do carrinho (18) | vetor do produto candidato (18) ]
+// Saída   (1) : probabilidade sigmoid → o quão bem o produto combina com o carrinho
+//
+// As camadas Dense comprimem progressivamente a representação.
+// BatchNormalization estabiliza os gradientes → treino mais rápido e consistente.
+// Dropout "desliga" neurônios aleatórios durante o treino → evita memorizar os dados.
 function buildModel() {
   const model = tf.sequential({ name: 'RecommendationNet' });
 
   model.add(tf.layers.dense({ units: 128, activation: 'relu', inputShape: [FEATURE_DIM * 2] }));
-  model.add(tf.layers.batchNormalization());
-  model.add(tf.layers.dropout({ rate: 0.3 }));
+  model.add(tf.layers.batchNormalization()); // normaliza ativações entre camadas
+  model.add(tf.layers.dropout({ rate: 0.3 })); // desativa 30% dos neurônios aleatoriamente
+
   model.add(tf.layers.dense({ units: 64, activation: 'relu' }));
   model.add(tf.layers.dropout({ rate: 0.2 }));
+
   model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
-  model.add(tf.layers.dense({ units: 1,  activation: 'sigmoid' }));
+
+  // Sigmoid: converte a saída em probabilidade entre 0 e 1
+  model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
 
   model.compile({
-    optimizer: tf.train.adam(0.001),
-    loss     : 'binaryCrossentropy',
+    optimizer: tf.train.adam(0.001),  // Adam ajusta a taxa de aprendizado por parâmetro automaticamente
+    loss     : 'binaryCrossentropy', // loss padrão para classificação binária (comprou / não comprou)
     metrics  : ['accuracy'],
   });
 
   return model;
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
+// ── 6. Treinamento ────────────────────────────────────────────────────────────
+// Converte os dados em tensores (formato numérico do TF), treina a rede por 60
+// épocas e chama onEpochEnd a cada época (usado para transmitir métricas ao browser).
 async function trainModel(users, products, onEpochEnd) {
-  const { inputs, labels, count } = generateTrainingData(users, products);
-  console.log(`[RecomModel] Training samples generated: ${count}`);
+  const { inputVectors, outputLabels, totalSamples } = generateTrainingData(users, products);
+  console.log(`[RecomModel] Amostras de treino geradas: ${totalSamples}`);
 
-  const X       = tf.tensor2d(inputs);
-  const y       = tf.tensor1d(labels);
-  const model   = buildModel();
+  // Tensores: matrizes numéricas que o TF.js processa (suporte a GPU/WASM)
+  const inputTensor = tf.tensor2d(inputVectors);  // shape: [totalSamples, 36]
+  const labelTensor = tf.tensor1d(outputLabels);  // shape: [totalSamples]
 
-  const history = await model.fit(X, y, {
+  const model = buildModel();
+
+  const trainingHistory = await model.fit(inputTensor, labelTensor, {
     epochs         : 60,
-    batchSize      : 32,
-    validationSplit: 0.2,
+    batchSize      : 32,   // atualiza os pesos a cada 32 amostras (não uma por vez)
+    validationSplit: 0.2,  // 20% dos dados reservados para medir overfitting
     shuffle        : true,
-    callbacks      : {
-      onEpochEnd: async (epoch, logs) => {
-        if (onEpochEnd) await onEpochEnd(epoch, logs);
+    callbacks: {
+      // Chamado ao fim de cada época → controlador emite evento Socket.io ao browser
+      onEpochEnd: async (epochIndex, metrics) => {
+        if (onEpochEnd) await onEpochEnd(epochIndex, metrics);
       },
     },
   });
 
-  X.dispose();
-  y.dispose();
+  // Libera a memória dos tensores de entrada (o modelo retém apenas seus pesos)
+  inputTensor.dispose();
+  labelTensor.dispose();
 
-  return { model, history, sampleCount: count };
+  return { model, history: trainingHistory, sampleCount: totalSamples };
 }
 
-function scoreProducts(model, cartProducts, allProducts) {
-  if (!model || !cartProducts.length) {
-    return allProducts.map(p => ({ ...p, score: 0, inCart: false }));
+// ── 7. Inferência (Recomendação) ──────────────────────────────────────────────
+// Dado o carrinho atual, atribui um score a cada produto do catálogo e ordena.
+// Produtos já no carrinho vão para o final da lista (já foram escolhidos).
+function scoreProducts(trainedModel, cartProducts, allProducts) {
+  // Sem modelo ou carrinho vazio: retorna catálogo sem ordenação
+  if (!trainedModel || !cartProducts.length) {
+    return allProducts.map(product => ({ ...product, score: 0, inCart: false }));
   }
 
-  const ctxVec  = meanVector(cartProducts.map(productToVector));
-  const cartIds = new Set(cartProducts.map(p => p.id));
+  // Representa o carrinho como um único vetor (média dos itens)
+  const cartContextVector = averageFeatureVector(cartProducts.map(productToFeatureVector));
+  const cartProductIds    = new Set(cartProducts.map(p => p.id));
 
+  // tf.tidy() descarta automaticamente tensores intermediários após o bloco → sem memory leak
   return tf.tidy(() => {
-    const raw    = allProducts.map(p => [...ctxVec, ...productToVector(p)]);
-    const tensor = tf.tensor2d(raw);
-    const scores = Array.from(model.predict(tensor).dataSync());
+    // Monta uma linha de input para cada produto: [contextoCarrinho | vetorProduto]
+    const scoringInputMatrix = allProducts.map(product => [
+      ...cartContextVector,
+      ...productToFeatureVector(product),
+    ]);
+
+    // Roda o modelo em batch para todos os produtos de uma vez (eficiente)
+    const predictionScores = Array.from(
+      trainedModel.predict(tf.tensor2d(scoringInputMatrix)).dataSync()
+    );
 
     return allProducts
-      .map((p, i) => ({ ...p, score: +scores[i].toFixed(4), inCart: cartIds.has(p.id) }))
-      .sort((a, b) => {
-        if (a.inCart !== b.inCart) return a.inCart ? 1 : -1;
-        return b.score - a.score;
+      .map((product, index) => ({
+        ...product,
+        score : +predictionScores[index].toFixed(4), // probabilidade arredondada
+        inCart: cartProductIds.has(product.id),
+      }))
+      .sort((productA, productB) => {
+        // Itens do carrinho sempre vão para o fim (já selecionados)
+        if (productA.inCart !== productB.inCart) return productA.inCart ? 1 : -1;
+        // Demais produtos: maior score primeiro
+        return productB.score - productA.score;
       });
   });
 }
