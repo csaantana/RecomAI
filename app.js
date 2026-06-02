@@ -11,7 +11,7 @@ const routes     = require('./routes');
 // Responsabilidades:
 //   1. Configura o Express (HTTP) e o Socket.io (WebSocket) no mesmo servidor
 //   2. Registra as rotas da API
-//   3. Ao subir, dispara o treino automático do modelo
+//   3. Ao subir, dispara o treino automático após 2s (deixa o browser conectar)
 //   4. Sincroniza novos clientes Socket.io com o estado atual do treino
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -20,37 +20,30 @@ const httpServer = http.createServer(expressApp);
 const socketIo   = new Server(httpServer, { cors: { origin: '*' } });
 const PORT       = 3000;
 
-// Middleware: lê JSON no body e serve arquivos estáticos da pasta /public
 expressApp.use(express.json());
 expressApp.use(express.static(path.join(__dirname, 'public')));
-
-// Disponibiliza a instância do Socket.io para os controllers via req.app.get('io')
 expressApp.set('io', socketIo);
 
 expressApp.use('/api', routes);
 expressApp.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'views', 'index.html')));
 
 // ── Sincronização de clientes Socket.io ──────────────────────────────────────
-// Quando um novo browser conecta (ou reconecta após refresh), pode chegar em 3 momentos:
-//   A) Antes do treino começar  → não faz nada, o evento 'training:start' chegará logo
-//   B) Durante o treino         → reproduz épocas já registradas + recebe o restante ao vivo
-//   C) Após o treino concluir   → reproduz todo o histórico + recebe 'training:done'
+// Quando um novo browser conecta pode chegar em 3 momentos:
+//   A) Antes de qualquer época → não envia nada; training:start chegará logo
+//   B) Durante o treino        → replica épocas já gravadas + recebe as restantes ao vivo
+//   C) Após o treino concluir  → replica todo o histórico + training:done
 socketIo.on('connection', clientSocket => {
   const state = require('./models/stateModel');
 
   if (state.epochHistory.length) {
-    // Caso B ou C — cliente chegou durante ou após o treino.
-    // Manda o histórico de épocas primeiro para popular os gráficos.
+    // Casos B e C: envia histórico para popular os gráficos
     clientSocket.emit('training:history', state.epochHistory);
-    // NÃO mandamos training:start aqui: o handler no browser chama
-    // resetCharts() ao receber training:start, o que apagaria o histórico.
-    // Os eventos training:progress seguintes chegam naturalmente via io.emit().
+    // Não manda training:start — ele chama resetCharts() e apagaria o histórico
   } else if (state.isTraining) {
-    // Caso A — treino começou mas ainda não há épocas registradas.
+    // Caso A: treino iniciou mas ainda não há épocas gravadas
     clientSocket.emit('training:start', { totalEpochs: 60 });
   }
 
-  // Treino já concluído → informa direto para habilitar o botão de recomendação
   if (state.trainingComplete) {
     clientSocket.emit('training:done', state.lastMetrics);
   }
@@ -63,30 +56,33 @@ socketIo.on('connection', clientSocket => {
 httpServer.listen(PORT, () => {
   console.log(`\n✅  App  → http://localhost:${PORT}`);
 
-  // Treina o modelo uma única vez ao subir o servidor.
-  // Após o treino, qualquer seleção de usuário / mudança de carrinho usa apenas
-  // inferência (scoreProducts) — rápida, sem precisar retreinar.
-  const { triggerTraining } = require('./controllers/modelController');
-  console.log('🧠  Iniciando treino automático do modelo...');
-  triggerTraining(socketIo).then(() => {
-    if (require('./models/stateModel').trainingComplete) {
-      console.log('🎯  Modelo pronto — recomendações disponíveis sem novo treino.\n');
-    }
-  });
-
-  // BrowserSync: proxy reverso que monitora arquivos e recarrega o browser automaticamente
+  // BrowserSync: abre o browser na porta 3001 (proxy reverso com auto-reload)
   try {
     const browserSync = require('browser-sync').create();
     browserSync.init({
-      proxy   : `localhost:${PORT}`, // encaminha requests para o Express
-      port    : PORT + 1,            // browser-sync escuta na porta 3001
-      files   : ['views/**/*.html', 'public/**/*'], // arquivos monitorados
+      proxy   : `localhost:${PORT}`,
+      port    : PORT + 1,
+      files   : ['views/**/*.html', 'public/**/*'],
       open    : true,
       notify  : false,
       logLevel: 'silent',
     });
-    console.log(`🔄  Sync → http://localhost:${PORT + 1}  (auto-reload ativo)\n`);
+    console.log(`🔄  Sync → http://localhost:${PORT + 1}  (auto-reload ativo)`);
   } catch (err) {
     console.warn('browser-sync não disponível:', err.message);
   }
+
+  // Aguarda 2s antes de iniciar o treino.
+  // Motivo: o BrowserSync precisa abrir o browser e o browser precisa estabelecer
+  // a conexão socket.io. Sem este delay o treino começa antes do cliente conectar
+  // e os primeiros eventos de progresso são perdidos → gráficos ficam em branco.
+  const { triggerTraining } = require('./controllers/modelController');
+  setTimeout(() => {
+    console.log('\n🧠  Iniciando treino automático do modelo...');
+    triggerTraining(socketIo).then(() => {
+      if (require('./models/stateModel').trainingComplete) {
+        console.log('🎯  Modelo pronto — recomendações disponíveis sem novo treino.\n');
+      }
+    });
+  }, 2000);
 });

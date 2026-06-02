@@ -85,13 +85,19 @@ function shuffleInPlace(array) {
 
 // ── 5. Geração dos dados de treinamento ───────────────────────────────────────
 //
-// Para cada usuário com N compras, simula todos os estados possíveis de carrinho
-// (subconjuntos de tamanho k = 1..N-1) e gera:
-//   - Pares positivos : produto que o usuário comprou dado aquele carrinho parcial → label 1
-//   - Pares negativos : produto aleatório não comprado → label 0  (3× por positivo)
+// Para cada usuário, simula estados de carrinho parcial (subconjuntos de compras)
+// e gera pares (carrinho → produto) com label 1 (comprou) ou 0 (não comprou).
 //
-// A idade do usuário é incluída no vetor de contexto do carrinho.
-// Resultado: ~4000 amostras com 100 produtos e usuários com 12 compras médias.
+// ⚠️  Limites para evitar explosão combinatória:
+//   MAX_CART_SIZE      — tamanho máximo do carrinho simulado.
+//                        C(14, 7) = 3.432 subconjuntos por usuário é inviável;
+//                        limitando a 4 o pior caso é C(14, 4) = 1.001.
+//   MAX_SUBSETS_SAMPLE — quando C(n, k) > limite, amostra aleatoriamente.
+//                        Isso garante ~10.000 amostras totais independente do
+//                        tamanho do histórico — rápido para o backend puro JS.
+const MAX_CART_SIZE      = 4;   // tamanho máximo do subconjunto de carrinho
+const MAX_SUBSETS_SAMPLE = 12;  // máximo de subconjuntos por tamanho de carrinho
+
 function generateTrainingData(users, products) {
   const productById   = {};
   products.forEach(product => { productById[product.id] = product; });
@@ -111,8 +117,16 @@ function generateTrainingData(users, products) {
     const purchasedIds = new Set(purchasedProducts.map(p => p.id));
     const negativePool = allProductIds.filter(id => !purchasedIds.has(id));
 
-    for (let cartSize = 1; cartSize < purchasedProducts.length; cartSize++) {
-      const cartSubsets = getCombinations(purchasedProducts, cartSize);
+    // Limita o tamanho máximo do carrinho para evitar C(n,k) com k grande
+    const maxSize = Math.min(purchasedProducts.length - 1, MAX_CART_SIZE);
+
+    for (let cartSize = 1; cartSize <= maxSize; cartSize++) {
+      const allSubsets = getCombinations(purchasedProducts, cartSize);
+
+      // Amostra aleatória quando há mais subconjuntos do que o limite
+      const cartSubsets = allSubsets.length > MAX_SUBSETS_SAMPLE
+        ? shuffleInPlace([...allSubsets]).slice(0, MAX_SUBSETS_SAMPLE)
+        : allSubsets;
 
       for (const cartSubset of cartSubsets) {
         const notYetBought      = purchasedProducts.filter(p => !cartSubset.includes(p));

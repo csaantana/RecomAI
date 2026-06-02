@@ -47,7 +47,7 @@ async function triggerTraining(io) {
     const { model, history, sampleCount } = await trainModel(
       allUsers,
       allProducts,
-      (epochIndex, metrics) => {
+      async (epochIndex, metrics) => {
         const trainAccuracy = metrics.acc      ?? metrics.accuracy      ?? 0;
         const valAccuracy   = metrics.val_acc  ?? metrics.val_accuracy  ?? 0;
 
@@ -64,10 +64,10 @@ async function triggerTraining(io) {
         io.emit('training:progress', epochSnapshot);
 
         // O backend puro JS do TF.js bloqueia o event loop durante cada época.
-        // Sem este yield o socket.io só consegue enviar todos os eventos de uma vez
-        // ao final do treino — os gráficos ficam em branco até o fim.
-        // setTimeout(0) cede o loop após cada época para o socket.io poder fluir.
-        await new Promise(resolve => setTimeout(resolve, 0));
+        // setImmediate garante que o Node.js passe pela fase de I/O (poll) antes
+        // de continuar — é onde o socket.io realmente envia os frames WebSocket.
+        // setTimeout(0) dispara na fase de timers, ANTES de I/O, então não serve.
+        await new Promise(resolve => setImmediate(resolve));
       }
     );
 
