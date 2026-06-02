@@ -1,28 +1,37 @@
 # RecomAI — Product Recommendation System
 
-A full-stack product recommendation engine built with **TensorFlow.js**, **Node.js** and **Socket.io**. The neural network learns from real user purchase histories and recommends products in real time based on the current shopping cart.
+A full-stack product recommendation engine powered by **TensorFlow.js** and **Qdrant** (vector database). The neural network learns co-purchase patterns from 10 user profiles and recommends products in real time through a two-stage pipeline: fast ANN search on Qdrant followed by neural re-ranking.
 
 ---
 
-## Demo
+## How it works at a glance
 
-| Step | What happens |
-|------|-------------|
-| Select a user (or start fresh) | Cart loads from purchase history |
-| Add products to cart | Products marked as selected |
-| **⚡ Train Model** | 60-epoch training with live loss/accuracy charts |
-| **🎯 Run Recommendation** | Product grid re-sorts by score · Top pick highlighted · Checkout card shows best match |
+```
+npm start
+  └─ server boots
+  └─ waits 2 s (browser connects via BrowserSync)
+  └─ auto-trains neural network (60 epochs, live charts)
+  └─ extracts 32-dim embeddings → indexes all products in Qdrant
+
+Select a user (or build a custom cart) → Run Recommendation
+  └─ Stage 1: cart embedding → Qdrant ANN search → top-50 candidates
+  └─ Stage 2: full model re-ranks the 50 candidates
+  └─ Product grid re-sorts · ⭐ Top Pick badge · Checkout recommendation card
+```
+
+No retraining needed when changing users or cart — the model runs **inference only**.
 
 ---
 
 ## Features
 
-- **Neural Collaborative Filtering** — pairwise model trained on co-purchase patterns
-- **~3 000 training samples** generated from 10 users via combinatorial subset augmentation
-- **Live training charts** — loss and accuracy update epoch-by-epoch via Socket.io
-- **Real-time product ranking** — sorted by recommendation score after each inference run
-- **BrowserSync** — auto-reloads the browser on view/asset changes during development
-- **MVC architecture** — clean separation between models, controllers, routes and views
+- **Auto-train on startup** — model trains once; all subsequent sessions use inference only
+- **Two-stage retrieval** — Qdrant ANN (milliseconds) + neural re-rank (precision)
+- **Age as a feature** — user age is the last dimension of the cart context vector, letting the model capture age-group preferences
+- **Live training charts** — loss and accuracy animate epoch-by-epoch via Socket.io
+- **Late-connect resilience** — page refresh or mid-training join replays full epoch history
+- **Graceful fallback** — if Qdrant is offline, scoring runs directly over all 101 products
+- **MVC architecture** — clean separation of routes, controllers, models and views
 
 ---
 
@@ -31,9 +40,10 @@ A full-stack product recommendation engine built with **TensorFlow.js**, **Node.
 | Layer | Technology |
 |-------|-----------|
 | ML | TensorFlow.js (`@tensorflow/tfjs`) |
+| Vector DB | Qdrant (Docker) |
 | Backend | Node.js · Express · Socket.io |
 | Frontend | Bootstrap 5 · Chart.js 4 · vanilla JS |
-| Dev tooling | BrowserSync · Nodemon |
+| Dev tooling | BrowserSync · Nodemon · Docker Compose |
 
 ---
 
@@ -44,74 +54,67 @@ A full-stack product recommendation engine built with **TensorFlow.js**, **Node.
 ```mermaid
 graph LR
     subgraph Client["🌐 Browser — port 3001"]
-        UI["Bootstrap 5 UI\nindex.html"]
+        UI["Bootstrap 5 UI"]
         Charts["Chart.js\nLoss & Accuracy"]
-        SClient["Socket.io Client"]
+        SCli["Socket.io Client"]
     end
 
     subgraph BS["🔄 BrowserSync"]
-        Proxy["HTTP Proxy\n+ File Watcher"]
+        Proxy["HTTP Proxy + File Watcher"]
     end
 
     subgraph API["⚙️ Express — port 3000"]
-        Router["Router\n/api/*"]
-
+        Router["/api/*"]
         subgraph CTRL["Controllers"]
             PC["ProductController"]
             UC["UserController"]
             MC["ModelController"]
         end
-
         subgraph MDL["Models"]
-            State["StateModel\ncart · trainedModel\nisTraining"]
-            RecM["RecommendationModel\nTensorFlow.js"]
+            State["StateModel\ncart · model · sessionUser\nvectorIndexReady"]
+            RecM["RecommendationModel\nTF.js — train · score · embed"]
+            VS["VectorStore\nQdrant client"]
         end
-
         SIO["Socket.io Server"]
     end
 
-    subgraph TF["🧠 TF.js Pipeline"]
-        Gen["generateTrainingData\n~3 000 samples"]
-        Net["Neural Network\n128 → 64 → 32 → 1"]
-        Score["scoreProducts\nrank by score"]
+    subgraph QD["🔍 Qdrant — port 6333"]
+        Coll["product_embeddings\n32-dim · Cosine"]
     end
 
     subgraph DATA["📦 Data"]
-        PJ[("products.json\n30 items")]
-        UJ[("users.json\n10 users")]
+        PJ[("products.json\n101 items")]
+        UJ[("users.json\n10 users + age")]
     end
 
-    UI -->|HTTP GET /| Proxy -->|proxy| Router
-    SClient <-->|WebSocket| SIO
+    UI -->|HTTP| Proxy -->|proxy| Router
+    SCli <-->|WebSocket| SIO
     Router --> PC & UC & MC
-    PC & UC & MC <--> State
-    MC --> RecM
-    RecM --> Gen --> UJ & PJ
-    RecM --> Net --> Score
-    Score --> State
-    SIO -->|training:progress\ntraining:done| SClient
-    Charts -.-> UI
+    MC --> RecM --> DATA
+    MC --> VS <-->|upsert / search| Coll
+    MC & UC --> State
+    SIO -->|training:progress\ntraining:done\nvector:indexed| SCli
 ```
 
 ### Folder Structure
 
 ```
 RecomAI/
-├── app.js                    # Entry point — Express + Socket.io + BrowserSync
-├── routes/
-│   └── index.js              # All API route bindings
+├── docker-compose.yml            # Qdrant container (port 6333)
+├── app.js                        # Entry point — Express + Socket.io + BrowserSync
+├── routes/index.js               # All API route bindings
 ├── controllers/
-│   ├── productController.js  # GET /api/products (sorted when model is trained)
-│   ├── userController.js     # Cart management & user loading
-│   └── modelController.js   # Train + recommend endpoints
+│   ├── productController.js      # GET /api/products (sorted when model active)
+│   ├── userController.js         # Cart CRUD + session user age sync
+│   └── modelController.js        # Train · recommend · Qdrant indexing
 ├── models/
-│   ├── stateModel.js         # In-memory state (cart, trained model)
-│   └── recommendationModel.js # TF.js model: build · train · score
+│   ├── stateModel.js             # Shared in-memory state (singleton)
+│   ├── recommendationModel.js    # TF.js: feature engineering, training, inference
+│   └── vectorStore.js            # Qdrant: index products, search similar
 ├── data/
-│   ├── products.json         # 30 products across 6 categories
-│   └── users.json            # 10 users with coherent purchase histories
-└── views/
-    └── index.html            # Single-page UI
+│   ├── products.json             # 101 products across 6 categories
+│   └── users.json                # 10 users with age, profile, 12-14 purchases
+└── views/index.html              # Single-page Bootstrap UI
 ```
 
 ---
@@ -120,40 +123,66 @@ RecomAI/
 
 ### Feature Engineering
 
-Each product is encoded as an **18-dimensional vector**:
-
+**Product vector — 18 dims:**
 ```
-[ category (6d one-hot) | normalized price (1d) | color (11d one-hot) ]
+[ category (6d one-hot) | price normalized (1d) | color (11d one-hot) ]
+```
+
+**Cart context vector — 19 dims:**
+```
+[ mean of product vectors (18d) | user age / 100 (1d) ]
+```
+Age is the last dimension. It lets the model capture age-group purchasing patterns (e.g. younger users lean toward electronics, older toward home & cooking).
+
+**Model input — 37 dims:**
+```
+concat( cart_context_vector[19] , candidate_product_vector[18] )
 ```
 
 ### Training Data Generation
 
-For each of the 10 users with N purchases, every subset of size k (k = 1 … N−1) is used as a "cart context":
+For each user with N purchases, every subset of size k (capped at **k ≤ 4** and **≤ 12 sampled subsets** per size) is used as a simulated cart context:
 
-- **Positive samples** → remaining purchased products (label = 1)
-- **Negative samples** → 3 × random un-purchased products (label = 0)
+- **Positive pair** → product the user actually bought (label = 1)
+- **Negative pair** → 3 × random unrelated products (label = 0)
 
-This yields **~3 000 balanced training samples** from just 10 users.
+The caps prevent combinatorial explosion: `C(14, 7) = 3 432` subsets per size would make training stall. With the limits, the dataset stays at **~10–15k balanced samples** — fast enough for the pure-JS TF.js backend.
 
 ### Model Architecture
 
 ```
-Input(36) ──► Dense(128, ReLU) ──► BatchNorm ──► Dropout(0.3)
+Input(37) ──► Dense(128, ReLU) ──► BatchNorm ──► Dropout(0.3)
           ──► Dense(64,  ReLU) ──► Dropout(0.2)
-          ──► Dense(32,  ReLU)
-          ──► Dense(1,   Sigmoid)   → purchase probability
+          ──► Dense(32,  ReLU)  ◄── "embedding_layer" (used by Qdrant)
+          ──► Dense(1,  Sigmoid) → purchase probability
 ```
 
-- **Input:** `concat(cart_context_vector, candidate_product_vector)` = 36 dims  
-- **Output:** probability that the candidate product pairs well with the current cart  
-- **Optimizer:** Adam (lr = 0.001) · **Loss:** Binary Cross-Entropy · **Epochs:** 60
+- **Optimizer:** Adam (lr = 0.001)  
+- **Loss:** Binary Cross-Entropy  
+- **Epochs:** 60 · **Batch size:** 32 · **Validation split:** 20 %
 
-### Inference
+### Two-Stage Inference with Qdrant
+
+After training, a sub-model (`embeddingExtractor`) is created from the same weights, returning the 32-dim output of `embedding_layer` instead of the final probability.
 
 ```
-cart_context = mean(feature_vectors of cart items)
-score(p)     = model.predict([cart_context, feature_vector(p)])
-ranking      = products sorted by score descending (cart items pushed to bottom)
+POST-TRAINING — indexing (runs once):
+  for each product p:
+    input = [zeros(19), productFeatures(18)]   ← empty cart context
+    embedding_p = embeddingExtractor.predict(input)   → 32 dims
+    qdrant.upsert(id=p.id, vector=embedding_p, payload=p)
+
+INFERENCE — recommend (runs on every request):
+  Stage 1 — Retrieval (ANN, O(log n)):
+    cartContext = buildCartContextVector(cart, userAge)   → 19 dims
+    queryInput  = [...cartContext, ...zeros(18)]          → 37 dims
+    queryEmbed  = embeddingExtractor.predict(queryInput)  → 32 dims
+    candidates  = qdrant.search(queryEmbed, topK=50)
+
+  Stage 2 — Re-rank (neural, O(50)):
+    for each candidate:
+      score = fullModel.predict([cartContext, productFeatures])
+    sort by score desc
 ```
 
 ---
@@ -167,58 +196,42 @@ sequenceDiagram
     participant BS  as BrowserSync :3001
     participant API as Express :3000
     participant TF  as TF.js Model
+    participant QD  as Qdrant :6333
     participant DB  as data/*.json
 
-    Note over User,DB: ── App Initialization ──────────────────────────
-    User->>BS: Open http://localhost:3001
-    BS->>API: proxy → GET /
-    API-->>UI: index.html
-    UI->>API: GET /api/products
-    UI->>API: GET /api/users
-    API->>DB: read JSON files
-    DB-->>API: products + users
-    API-->>UI: JSON arrays
-    UI-->>User: Product grid + user dropdown
-
-    Note over User,DB: ── Cart Management ─────────────────────────────
-    User->>UI: Select existing user
-    UI->>API: POST /api/cart/load/:userId
-    API-->>UI: purchase history as cart
-    UI-->>User: Cart + products updated
-
-    User->>UI: Click ＋ Adicionar on a product
-    UI->>API: POST /api/cart/add { productId }
-    API-->>UI: updated cart[]
-    UI-->>User: Card marked as in-cart
-
-    Note over User,DB: ── Model Training ──────────────────────────────
-    User->>UI: Click ⚡ Train Model
-    UI->>API: POST /api/model/train
-    API-->>UI: { message: "Training started" }
-
-    API->>DB: read users.json + products.json
-    API->>TF: generateTrainingData() → ~3 000 samples
-    API->>TF: model.fit(X, y, epochs=60)
-
-    loop Each epoch  (1 → 60)
-        TF-->>API: onEpochEnd(epoch, { loss, accuracy, val_loss, val_accuracy })
-        API-->>UI: socket.emit("training:progress")
+    Note over User,DB: ── Startup (auto, no user action needed) ────────
+    API->>DB: load products + users
+    Note over API: wait 2 s for browser to connect
+    API->>TF: generateTrainingData() → ~12 000 samples
+    API->>TF: model.fit(epochs=60)
+    loop Each epoch
+        TF-->>API: onEpochEnd → setImmediate (flush I/O)
+        API-->>UI: socket "training:progress"
         UI-->>User: Live chart update
     end
+    TF-->>API: training done
+    API->>TF: createEmbeddingExtractor()
+    API->>QD: upsert 101 product embeddings (32 dims)
+    API-->>UI: socket "training:done" + "vector:indexed"
+    UI-->>User: ✅ Modelo pronto · 🔍 Qdrant indexado
 
-    TF-->>API: training complete
-    API->>API: state.model = trainedModel
-    API-->>UI: socket.emit("training:done")
-    UI-->>User: ✅ Accuracy + loss summary
+    Note over User,DB: ── Cart Management ─────────────────────────────
+    User->>UI: Select user (e.g. Alex — 28 anos)
+    UI->>API: POST /api/cart/load/u01
+    API->>API: state.sessionUser.age = 28
+    API-->>UI: { cart, user: { age, profile } }
+    UI-->>User: Cart loaded · age badge updated
 
     Note over User,DB: ── Recommendation ──────────────────────────────
     User->>UI: Click 🎯 Run Recommendation
     UI->>API: POST /api/model/recommend
-    API->>TF: scoreProducts(cart, allProducts)
-    Note right of TF: cart_ctx = mean(cartVectors)<br/>score(p) = model.predict([ctx, p])
-    TF-->>API: products[] sorted by score desc
-    API-->>UI: { sortedProducts, recommendation }
-    UI-->>User: Re-sorted grid · ⭐ Top Pick badge · Checkout card
+    API->>TF: buildCartContextVector(cart, age) → 19 dims
+    API->>TF: embeddingExtractor → queryVector 32 dims
+    API->>QD: search(queryVector, topK=50)
+    QD-->>API: top-50 similar products
+    API->>TF: scoreProducts(top-50) → re-rank
+    API-->>UI: { sortedProducts, recommendation, usedVectorSearch: true }
+    UI-->>User: Grid re-sorted · ⭐ Top Pick · Checkout card
 ```
 
 ---
@@ -228,69 +241,96 @@ sequenceDiagram
 ### Prerequisites
 
 - Node.js ≥ 18
+- Docker Desktop (for Qdrant)
 
 ### Install & Run
 
 ```bash
 git clone https://github.com/csaantana/RecomAI.git
 cd RecomAI
+
+# 1. Start Qdrant
+docker-compose up -d
+
+# 2. Install dependencies
 npm install
+
+# 3. Start the app
 npm start
 ```
 
-The app opens automatically at **http://localhost:3001** (BrowserSync with auto-reload).  
-The API server runs at **http://localhost:3000**.
+The browser opens automatically at **http://localhost:3001** (BrowserSync, auto-reload).  
+The API server runs at **http://localhost:3000**.  
+Qdrant dashboard: **http://localhost:6333/dashboard**
+
+### Startup sequence
+
+| Time | What happens |
+|------|-------------|
+| 0 s | Express + Socket.io start on port 3000 |
+| ~0.5 s | BrowserSync proxy starts on port 3001, opens browser |
+| 2 s | Auto-training begins (live charts animate) |
+| ~2–3 min | Training complete · Qdrant indexed · UI unlocks |
+
+> **No retraining needed.** Change users or cart freely — only inference runs.
 
 ---
 
 ## API Reference
 
+### REST endpoints
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/products` | List all products (sorted by score when model is active) |
-| `GET` | `/api/users` | List all users |
-| `GET` | `/api/cart` | Current cart contents |
+| `GET` | `/api/products` | Catalog (sorted by score when model + cart active) |
+| `GET` | `/api/users` | All 10 users with age, profile and purchase history |
+| `GET` | `/api/cart` | Current cart |
 | `POST` | `/api/cart/add` | Add product `{ productId }` |
-| `DELETE` | `/api/cart/:id` | Remove product from cart |
-| `POST` | `/api/cart/clear` | Empty the cart |
-| `POST` | `/api/cart/load/:userId` | Load a user's purchase history as cart |
-| `POST` | `/api/model/train` | Start training (progress streamed via Socket.io) |
-| `POST` | `/api/model/recommend` | Score all products and return top recommendation |
+| `DELETE` | `/api/cart/:id` | Remove product |
+| `POST` | `/api/cart/clear` | Empty cart, reset to guest user (28 y/o) |
+| `POST` | `/api/cart/load/:userId` | Load user history as cart, sync age |
+| `POST` | `/api/model/train` | Manual retrain (optional) |
+| `POST` | `/api/model/recommend` | Two-stage recommendation: Qdrant ANN → neural re-rank |
 
-### Socket.io Events
+### Socket.io events (server → client)
 
-| Event | Payload |
-|-------|---------|
-| `training:progress` | `{ epoch, totalEpochs, loss, accuracy, valLoss, valAccuracy }` |
-| `training:done` | `{ sampleCount, finalLoss, finalAccuracy }` |
-| `training:error` | `{ message }` |
+| Event | Payload | When |
+|-------|---------|------|
+| `training:start` | `{ totalEpochs }` | Training begins |
+| `training:history` | `epoch[]` | Client connects mid/post-training (replay) |
+| `training:progress` | `{ epoch, loss, accuracy, valLoss, valAccuracy }` | Each epoch end |
+| `training:done` | `{ sampleCount, finalLoss, finalAccuracy }` | Training complete |
+| `training:error` | `{ message }` | Training failed |
+| `vector:indexing` | `{ total }` | Qdrant indexing started |
+| `vector:indexed` | `{ count }` | All products indexed in Qdrant |
+| `vector:unavailable` | — | Qdrant offline, fallback active |
 
 ---
 
 ## Dataset
 
-### Products (30 items · 6 categories)
+### Products — 101 items across 6 categories
 
-`Electronics` · `Clothing` · `Sports` · `Home` · `Beauty` · `Books`
+`Electronics (20)` · `Clothing (18)` · `Sports (18)` · `Home (16)` · `Beauty (15)` · `Books (14)`
 
-Each product has: `id · name · category · price · color`
+Each product: `id · name · category · price · color`
 
-### Users (10 profiles with coherent purchase patterns)
+### Users — 10 profiles with age and 12–14 purchases
 
-| User | Profile | Purchased |
-|------|---------|-----------|
-| Alex | Tech Worker | Notebook, Mouse, Keyboard, USB Hub, Webcam |
-| Jordan | Gamer | Gaming Headset, Mouse, Keyboard, Monitor, USB Hub |
-| Maria | Fitness | Running Shoes, Sports Shirt, Water Bottle, Yoga Mat, Dumbbells |
-| Sofia | Fashion | Dress, Heels, Handbag, Sunglasses, Lipstick |
-| Lucas | Student | Clean Code, Desk Lamp, USB Hub, Atomic Habits, Speaker |
-| Chef Paulo | Home Cook | Chef Knife, Cast Iron, Cutting Board, Coffee Maker, Desk Lamp |
-| Ana | Wellness | Running Shoes, Sports Shirt, Water Bottle, Vitamin C, Moisturizer |
-| Rafael | Tech + Study | Notebook, Monitor, Clean Code, Atomic Habits, Desk Lamp |
-| Pedro | Outdoor | Hiking Backpack, Water Bottle, Running Shoes, Shorts, Jump Rope |
-| Isabella | Fashion + Beauty | Dress, Sunglasses, Vitamin C, Lipstick, Moisturizer |
+| User | Age | Profile | Key purchases |
+|------|-----|---------|---------------|
+| Alex | 28 | Tech Worker | Notebook, Monitor, Keyboard, SSD, Webcam… |
+| Jordan | 22 | Gamer | Headset, Gaming Mouse, Monitor, Smart TV… |
+| Maria | 31 | Fitness | Running Shoes, Yoga Mat, Dumbbells, Bandas… |
+| Sofia | 26 | Fashion | Dress, Heels, Handbag, Blazer, Perfume… |
+| Lucas | 20 | Estudante | Clean Code, Atomic Habits, Tablet, Python Book… |
+| Chef Paulo | 45 | Culinária | Chef Knife, Cast Iron, Cafeteira, Panelas… |
+| Ana | 29 | Wellness | Running Shoes, Vitamin C, Moisturizer, Yoga Mat… |
+| Rafael | 35 | Tech + Estudos | Notebook, Monitor, Design Patterns, Deep Work… |
+| Pedro | 34 | Outdoor / Ciclismo | Backpack, Trail Shoes, Capacete, Colete… |
+| Isabella | 24 | Fashion + Beauty | Dress, Perfume, Lipstick, Kit Skincare… |
 
-User clusters (Tech, Sports, Fashion+Beauty) intentionally overlap to give the model strong collaborative signals.
+Clusters (Tech, Sports, Fashion+Beauty, Books) intentionally overlap to give the model strong collaborative signals across age groups.
 
 ---
 
