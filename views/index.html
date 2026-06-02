@@ -33,15 +33,18 @@
 <nav class="navbar navbar-dark bg-dark px-3 py-2">
   <span class="navbar-brand fw-bold fs-5">🛍️ RecomAI</span>
   <div class="d-flex gap-2 align-items-center flex-wrap">
-    <small class="text-white-50">Usuário:</small>
+    <span id="modelBadge" class="badge bg-warning text-dark">
+      🧠 Treinando modelo...
+    </span>
+    <small class="text-white-50 ms-1">Usuário:</small>
     <select id="userSelect" class="form-select form-select-sm" style="min-width:210px"
-            onchange="onUserChange(this.value)">
+            onchange="onUserChange(this.value)" disabled>
       <option value="">➕ Novo Usuário (carrinho vazio)</option>
     </select>
-    <button id="btnTrain" class="btn btn-warning btn-sm fw-semibold"
-            onclick="trainModel()">⚡ Train Model</button>
+    <button id="btnTrain" class="btn btn-outline-warning btn-sm fw-semibold"
+            onclick="retrain()" disabled>⟳ Retreinar</button>
     <button id="btnRecom" class="btn btn-success btn-sm fw-semibold"
-            onclick="runRecommendation()">🎯 Run Recommendation</button>
+            onclick="runRecommendation()" disabled>🎯 Run Recommendation</button>
   </div>
 </nav>
 
@@ -82,9 +85,8 @@
       </div>
 
       <div id="trainingStatus">
-        <div class="alert alert-secondary py-2 small mb-0">
-          Modelo não treinado. Adicione itens ao carrinho e clique em
-          <strong>Train Model</strong>.
+        <div class="alert alert-warning py-2 small mb-0">
+          🧠 Treinamento automático em andamento…
         </div>
       </div>
 
@@ -189,6 +191,19 @@ function resetCharts() {
 // ── Socket.io ──────────────────────────────────────────────────────────────
 const socket = io('http://localhost:3000');
 
+socket.on('training:start', () => {
+  resetCharts();
+  setModelBadge('warning', '🧠 Treinando modelo…');
+  setStatus('info', '⏳ Treinamento automático em andamento…');
+  disableUI(true);
+});
+
+// Replayed to clients that connect after training already started/finished
+socket.on('training:history', history => {
+  resetCharts();
+  history.forEach(d => pushCharts(d));
+});
+
 socket.on('training:progress', data => {
   pushCharts(data);
   setStatus('info',
@@ -200,18 +215,32 @@ socket.on('training:progress', data => {
 
 socket.on('training:done', data => {
   modelTrained = true;
+  setModelBadge('success', '✅ Modelo pronto');
   setStatus('success',
-    `✅ Treinamento concluído! &nbsp; Loss: <strong>${data.finalLoss}</strong> &nbsp;|&nbsp; ` +
+    `✅ Modelo treinado! &nbsp; Loss: <strong>${data.finalLoss}</strong> &nbsp;|&nbsp; ` +
     `Acc: <strong>${(data.finalAccuracy * 100).toFixed(1)}%</strong> &nbsp;|&nbsp; ` +
     `Amostras: ${data.sampleCount}`
   );
-  resetBtn();
+  disableUI(false);
 });
 
 socket.on('training:error', data => {
+  setModelBadge('danger', '❌ Erro no treino');
   setStatus('danger', `❌ Erro: ${data.message}`);
-  resetBtn();
+  disableUI(false);
 });
+
+function setModelBadge(color, text) {
+  const b = document.getElementById('modelBadge');
+  b.className = `badge bg-${color} ${color === 'warning' ? 'text-dark' : ''}`;
+  b.textContent = text;
+}
+
+function disableUI(isTraining) {
+  document.getElementById('userSelect').disabled = isTraining;
+  document.getElementById('btnTrain').disabled   = isTraining;
+  document.getElementById('btnRecom').disabled   = isTraining || !modelTrained;
+}
 
 function setStatus(type, html) {
   document.getElementById('trainingStatus').innerHTML =
@@ -369,24 +398,25 @@ async function onUserChange(userId) {
 }
 
 // ── Model actions ──────────────────────────────────────────────────────────
-async function trainModel() {
-  const btn = document.getElementById('btnTrain');
-  btn.disabled    = true;
-  btn.textContent = '⏳ Treinando…';
+// Manual retrain (optional — model is auto-trained on startup)
+async function retrain() {
+  modelTrained = false;
+  disableUI(true);
   resetCharts();
-  setStatus('info', '⏳ Iniciando treinamento… aguarde os dados aparecerem no gráfico.');
+  setModelBadge('warning', '🧠 Retreinando…');
+  setStatus('info', '⏳ Retreinamento iniciado…');
 
   const res = await fetch('/api/model/train', { method: 'POST' });
   if (!res.ok) {
     const err = await res.json();
     setStatus('danger', `❌ ${err.error}`);
-    resetBtn();
+    disableUI(false);
   }
+  // result arrives via socket events (training:done / training:error)
 }
 
 async function runRecommendation() {
-  if (!modelTrained)  { alert('Treine o modelo primeiro! Clique em ⚡ Train Model.'); return; }
-  if (!cart.length)   { alert('Adicione produtos ao carrinho primeiro!'); return; }
+  if (!cart.length) { alert('Adicione produtos ao carrinho primeiro!'); return; }
 
   const res = await fetch('/api/model/recommend', { method: 'POST' });
   if (!res.ok) { const e = await res.json(); alert(e.error); return; }
@@ -396,12 +426,6 @@ async function runRecommendation() {
   document.getElementById('sortBadge').textContent = '— ordenado por recomendação';
   renderProducts();
   renderRecommendation(data.recommendation);
-}
-
-function resetBtn() {
-  const btn = document.getElementById('btnTrain');
-  btn.disabled    = false;
-  btn.textContent = '⚡ Train Model';
 }
 
 // ── Start ──────────────────────────────────────────────────────────────────
