@@ -1,13 +1,16 @@
 {
   "name": "recommendation-system",
   "version": "1.0.0",
-  "description": "TensorFlow.js Product Recommendation System",
+  "description": "TensorFlow.js Product Recommendation System with Qdrant Vector DB",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
-    "dev": "nodemon app.js"
+    "dev": "nodemon app.js",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down"
   },
   "dependencies": {
+    "@qdrant/js-client-rest": "^1.9.0",
     "@tensorflow/tfjs": "^4.20.0",
     "browser-sync": "^3.0.3",
     "express": "^4.18.2",

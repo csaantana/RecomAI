@@ -33,14 +33,14 @@
 <nav class="navbar navbar-dark bg-dark px-3 py-2">
   <span class="navbar-brand fw-bold fs-5">🛍️ RecomAI</span>
   <div class="d-flex gap-2 align-items-center flex-wrap">
-    <span id="modelBadge" class="badge bg-warning text-dark">
-      🧠 Treinando modelo...
-    </span>
+    <span id="modelBadge" class="badge bg-warning text-dark">🧠 Treinando...</span>
+    <span id="vectorBadge" class="badge bg-secondary">🔍 Vector DB: aguardando</span>
     <small class="text-white-50 ms-1">Usuário:</small>
-    <select id="userSelect" class="form-select form-select-sm" style="min-width:210px"
+    <select id="userSelect" class="form-select form-select-sm" style="min-width:230px"
             onchange="onUserChange(this.value)" disabled>
-      <option value="">➕ Novo Usuário (carrinho vazio)</option>
+      <option value="">➕ Novo Usuário — 28 anos</option>
     </select>
+    <span id="ageBadge" class="badge bg-light text-dark">👤 28 anos</span>
     <button id="btnTrain" class="btn btn-outline-warning btn-sm fw-semibold"
             onclick="retrain()" disabled>⟳ Retreinar</button>
     <button id="btnRecom" class="btn btn-success btn-sm fw-semibold"
@@ -134,6 +134,7 @@
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 let products       = [];
+let allUsers       = [];
 let cart           = [];
 let sortedProducts = [];
 let modelTrained   = false;
@@ -230,10 +231,35 @@ socket.on('training:error', data => {
   disableUI(false);
 });
 
+// Qdrant: indexação iniciada após o treino
+socket.on('vector:indexing', data => {
+  setVectorBadge('warning', `🔍 Indexando ${data.total} produtos...`);
+});
+
+// Qdrant: indexação concluída — vector search disponível
+socket.on('vector:indexed', data => {
+  setVectorBadge('info', `🔍 Qdrant: ${data.count} produtos indexados`);
+});
+
+// Qdrant offline — app usa scoring direto como fallback
+socket.on('vector:unavailable', () => {
+  setVectorBadge('secondary', '🔍 Qdrant: offline (fallback direto)');
+});
+
 function setModelBadge(color, text) {
   const b = document.getElementById('modelBadge');
-  b.className = `badge bg-${color} ${color === 'warning' ? 'text-dark' : ''}`;
+  b.className   = `badge bg-${color} ${color === 'warning' ? 'text-dark' : ''}`;
   b.textContent = text;
+}
+
+function setVectorBadge(color, text) {
+  const b = document.getElementById('vectorBadge');
+  b.className   = `badge bg-${color} ${color === 'warning' ? 'text-dark' : ''}`;
+  b.textContent = text;
+}
+
+function setAgeBadge(age) {
+  document.getElementById('ageBadge').textContent = `👤 ${age} anos`;
 }
 
 function disableUI(isTraining) {
@@ -257,11 +283,13 @@ async function init() {
   products       = prods;
   sortedProducts = [...prods];
 
+  allUsers = users; // armazena para lookup de idade no onUserChange
+
   const sel = document.getElementById('userSelect');
   users.forEach(u => {
     const opt = document.createElement('option');
     opt.value       = u.id;
-    opt.textContent = `${u.name}`;
+    opt.textContent = `${u.name} — ${u.age} anos (${u.profile})`;
     sel.appendChild(opt);
   });
 
@@ -331,20 +359,28 @@ function renderCart() {
     <small class="fw-semibold">Total: R$ ${total.toLocaleString('pt-BR')}</small>`;
 }
 
-function renderRecommendation(product) {
+function renderRecommendation(product, usedVectorSearch = false) {
   const panel = document.getElementById('recomPanel');
   if (!product) {
     panel.innerHTML = '<p class="text-muted small mb-0">Nenhuma recomendação disponível.</p>';
     return;
   }
-  const catCol = CAT_COLORS[product.category] ?? 'secondary';
+  const catCol     = CAT_COLORS[product.category] ?? 'secondary';
+  const searchInfo = usedVectorSearch
+    ? `<small class="text-info d-block mb-2">🔍 via Qdrant ANN + re-rank neural</small>`
+    : `<small class="text-muted d-block mb-2">⚡ via scoring direto</small>`;
+
   panel.innerHTML = `
+    ${searchInfo}
     <div class="mb-2">
       <span class="badge bg-${catCol} mb-1" style="font-size:.65rem">${product.category}</span>
       <h6 class="mb-0 fw-bold">${product.name}</h6>
       <small class="text-muted">${product.color}</small>
     </div>
-    <p class="fw-bold mb-2 fs-5">R$ ${product.price.toLocaleString('pt-BR')}</p>
+    <p class="fw-bold mb-1 fs-5">R$ ${product.price.toLocaleString('pt-BR')}</p>
+    ${product.qdrantScore !== undefined
+      ? `<small class="text-muted d-block mb-1">Qdrant score: ${product.qdrantScore}</small>`
+      : ''}
     <div class="d-flex align-items-center gap-2 mb-3">
       <div class="score-bar flex-grow-1">
         <div class="score-fill" style="width:${(product.score * 100).toFixed(0)}%"></div>
@@ -373,10 +409,11 @@ async function removeFromCart(productId) {
 async function clearCart() {
   const res = await fetch('/api/cart/clear', { method: 'POST' });
   if (res.ok) {
-    cart = [];
+    cart           = [];
     sortedProducts = [...products];
-    modelTrained   = false;
     document.getElementById('sortBadge').textContent = '';
+    document.getElementById('userSelect').value = '';
+    setAgeBadge(28); // reset para o usuário vazio padrão
     renderCart();
     renderProducts();
     renderRecommendation(null);
@@ -387,10 +424,11 @@ async function onUserChange(userId) {
   if (!userId) { await clearCart(); return; }
   const res = await fetch(`/api/cart/load/${userId}`, { method: 'POST' });
   if (res.ok) {
-    cart           = await res.json();
+    const data     = await res.json();
+    cart           = data.cart;
     sortedProducts = [...products];
-    modelTrained   = false;
     document.getElementById('sortBadge').textContent = '';
+    setAgeBadge(data.user.age);
     renderCart();
     renderProducts();
     renderRecommendation(null);
@@ -423,9 +461,14 @@ async function runRecommendation() {
 
   const data     = await res.json();
   sortedProducts = data.sortedProducts;
-  document.getElementById('sortBadge').textContent = '— ordenado por recomendação';
+
+  const searchLabel = data.usedVectorSearch
+    ? `— top ${data.candidatesFound} via Qdrant + re-rank neural`
+    : `— scoring direto (${data.candidatesFound} produtos)`;
+  document.getElementById('sortBadge').textContent = searchLabel;
+
   renderProducts();
-  renderRecommendation(data.recommendation);
+  renderRecommendation(data.recommendation, data.usedVectorSearch);
 }
 
 // ── Start ──────────────────────────────────────────────────────────────────

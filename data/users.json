@@ -1,52 +1,72 @@
 [
   {
     "id": "u01",
-    "name": "Alex (Tech Worker)",
-    "purchaseHistory": ["p01", "p02", "p03", "p04", "p05"]
+    "name": "Alex",
+    "age": 28,
+    "profile": "Tech Worker",
+    "purchaseHistory": ["p01","p02","p03","p04","p05","p08","p09","p11","p13","p15","p20","p07"]
   },
   {
     "id": "u02",
-    "name": "Jordan (Gamer)",
-    "purchaseHistory": ["p06", "p02", "p03", "p08", "p04"]
+    "name": "Jordan",
+    "age": 22,
+    "profile": "Gamer",
+    "purchaseHistory": ["p06","p02","p03","p08","p04","p11","p14","p16","p07","p15","p09","p19"]
   },
   {
     "id": "u03",
-    "name": "Maria (Fitness)",
-    "purchaseHistory": ["p15", "p13", "p17", "p16", "p18"]
+    "name": "Maria",
+    "age": 31,
+    "profile": "Fitness",
+    "purchaseHistory": ["p39","p25","p41","p40","p42","p43","p48","p49","p45","p50","p46","p52","p56"]
   },
   {
     "id": "u04",
-    "name": "Sofia (Fashion)",
-    "purchaseHistory": ["p09", "p10", "p11", "p12", "p27"]
+    "name": "Sofia",
+    "age": 26,
+    "profile": "Fashion",
+    "purchaseHistory": ["p21","p22","p23","p24","p74","p76","p77","p28","p32","p38","p31","p30","p36"]
   },
   {
     "id": "u05",
-    "name": "Lucas (Estudante)",
-    "purchaseHistory": ["p30", "p25", "p04", "p29", "p07"]
+    "name": "Lucas",
+    "age": 20,
+    "profile": "Estudante",
+    "purchaseHistory": ["p89","p61","p04","p88","p07","p17","p91","p100","p101","p15","p97","p02","p90"]
   },
   {
     "id": "u06",
-    "name": "Chef Paulo (Culinária)",
-    "purchaseHistory": ["p21", "p22", "p23", "p24", "p25"]
+    "name": "Chef Paulo",
+    "age": 45,
+    "profile": "Culinária",
+    "purchaseHistory": ["p57","p58","p59","p60","p62","p63","p65","p66","p67","p68","p69","p70","p72"]
   },
   {
     "id": "u07",
-    "name": "Ana (Wellness)",
-    "purchaseHistory": ["p15", "p13", "p17", "p26", "p28"]
+    "name": "Ana",
+    "age": 29,
+    "profile": "Wellness",
+    "purchaseHistory": ["p39","p25","p41","p73","p75","p80","p81","p82","p83","p40","p84","p85","p86"]
   },
   {
     "id": "u08",
-    "name": "Rafael (Tech + Estudos)",
-    "purchaseHistory": ["p01", "p08", "p30", "p29", "p25"]
+    "name": "Rafael",
+    "age": 35,
+    "profile": "Tech + Estudos",
+    "purchaseHistory": ["p01","p08","p89","p88","p61","p91","p96","p97","p17","p09","p04","p98","p95","p100"]
   },
   {
     "id": "u09",
-    "name": "Pedro (Outdoor)",
-    "purchaseHistory": ["p20", "p17", "p15", "p14", "p19"]
+    "name": "Pedro",
+    "age": 34,
+    "profile": "Outdoor / Ciclismo",
+    "purchaseHistory": ["p44","p41","p39","p26","p43","p46","p53","p54","p55","p51","p49","p52","p34","p47"]
   },
   {
     "id": "u10",
-    "name": "Isabella (Fashion + Beauty)",
-    "purchaseHistory": ["p09", "p12", "p26", "p27", "p28"]
+    "name": "Isabella",
+    "age": 24,
+    "profile": "Fashion + Beauty",
+    "purchaseHistory": ["p21","p24","p73","p74","p75","p76","p77","p83","p84","p85","p86","p87","p23","p32"]
   }
 ]
